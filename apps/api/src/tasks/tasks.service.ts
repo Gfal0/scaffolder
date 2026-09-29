@@ -20,6 +20,23 @@ interface UserContext {
   role: string;
 }
 
+const TASK_INCLUDE = {
+  owner: {
+    select: {
+      id: true,
+      name: true,
+      email: true,
+    },
+  },
+  category: {
+    select: {
+      id: true,
+      name: true,
+      color: true,
+    },
+  },
+};
+
 @Injectable()
 export class TasksService {
   constructor(private readonly prisma: PrismaService) {}
@@ -35,23 +52,20 @@ export class TasksService {
       }
     }
 
+    if (dto.categoryId) {
+      await this.assertCategoryBelongsTo(ownerId, dto.categoryId);
+    }
+
     const created = await this.prisma.task.create({
       data: {
         title: dto.title.trim(),
         description: dto.description?.trim() || null,
         priority: (dto.priority as TaskPriorityEnum) || TaskPriorityEnum.MEDIUM,
         dueDate: dto.dueDate ? new Date(dto.dueDate) : null,
+        categoryId: dto.categoryId || null,
         ownerId,
       },
-      include: {
-        owner: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
+      include: TASK_INCLUDE,
     });
 
     return this.serializeTask(created);
@@ -87,6 +101,10 @@ export class TasksService {
       where.priority = query.priority;
     }
 
+    if (query.categoryId) {
+      where.categoryId = query.categoryId;
+    }
+
     const allowedSortFields = ['createdAt', 'dueDate', 'title', 'priority', 'status'];
     const sortBy = allowedSortFields.includes(query.sortBy || '') ? query.sortBy! : 'createdAt';
     const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
@@ -98,15 +116,7 @@ export class TasksService {
         skip,
         take: pageSize,
         orderBy: { [sortBy]: sortOrder },
-        include: {
-          owner: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-            },
-          },
-        },
+        include: TASK_INCLUDE,
       }),
     ]);
 
@@ -129,15 +139,7 @@ export class TasksService {
         id,
         deletedAt: null,
       },
-      include: {
-        owner: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
+      include: TASK_INCLUDE,
     });
 
     if (!task) {
@@ -174,7 +176,8 @@ export class TasksService {
       (dto.title !== undefined && dto.title !== existing.title) ||
       (dto.description !== undefined && dto.description !== existing.description) ||
       (dto.priority !== undefined && dto.priority !== existing.priority) ||
-      (dto.dueDate !== undefined);
+      (dto.dueDate !== undefined) ||
+      (dto.categoryId !== undefined && dto.categoryId !== existing.categoryId);
 
     if (isAlreadyCompleted && !isReopening && hasFieldChanges) {
       throw new BadRequestException(
@@ -192,6 +195,11 @@ export class TasksService {
       }
     }
 
+    if (dto.categoryId) {
+      // Usa o dono ORIGINAL da tarefa, não o do usuário que edita (relevante para ADMIN)
+      await this.assertCategoryBelongsTo(existing.ownerId, dto.categoryId);
+    }
+
     const updated = await this.prisma.task.update({
       where: { id },
       data: {
@@ -200,16 +208,9 @@ export class TasksService {
         ...(dto.status !== undefined ? { status: dto.status as TaskStatusEnum } : {}),
         ...(dto.priority !== undefined ? { priority: dto.priority as TaskPriorityEnum } : {}),
         ...(dto.dueDate !== undefined ? { dueDate: dto.dueDate ? new Date(dto.dueDate) : null } : {}),
+        ...(dto.categoryId !== undefined ? { categoryId: dto.categoryId || null } : {}),
       },
-      include: {
-        owner: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-          },
-        },
-      },
+      include: TASK_INCLUDE,
     });
 
     return this.serializeTask(updated);
@@ -240,6 +241,16 @@ export class TasksService {
     });
   }
 
+  private async assertCategoryBelongsTo(ownerId: string, categoryId: string): Promise<void> {
+    const category = await this.prisma.category.findFirst({
+      where: { id: categoryId, ownerId, deletedAt: null },
+    });
+
+    if (!category) {
+      throw new BadRequestException('Categoria informada não existe ou não pertence a este usuário.');
+    }
+  }
+
   private serializeTask(task: any): TaskDto {
     return {
       id: task.id,
@@ -256,6 +267,14 @@ export class TasksService {
             email: task.owner.email,
           }
         : undefined,
+      categoryId: task.categoryId ?? null,
+      category: task.category
+        ? {
+            id: task.category.id,
+            name: task.category.name,
+            color: task.category.color,
+          }
+        : null,
       createdAt: new Date(task.createdAt).toISOString(),
       updatedAt: new Date(task.updatedAt).toISOString(),
     };

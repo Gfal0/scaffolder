@@ -23,6 +23,14 @@ describe('TasksService', () => {
     role: 'ADMIN',
   };
 
+  const mockCategory = {
+    id: 'category-uuid-1',
+    name: 'Trabalho',
+    color: '#3B82F6',
+    ownerId: 'user-uuid-1',
+    deletedAt: null,
+  };
+
   const mockTask = {
     id: 'task-uuid-1',
     title: 'Estudar Arquitetura BFF',
@@ -31,6 +39,7 @@ describe('TasksService', () => {
     priority: TaskPriorityEnum.HIGH,
     dueDate: new Date(Date.now() + 86400000),
     ownerId: 'user-uuid-1',
+    categoryId: null,
     deletedAt: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -39,6 +48,7 @@ describe('TasksService', () => {
       name: 'Ada Lovelace',
       email: 'ada@example.com',
     },
+    category: null,
   };
 
   beforeEach(() => {
@@ -49,6 +59,9 @@ describe('TasksService', () => {
         findFirst: vi.fn(),
         count: vi.fn(),
         update: vi.fn(),
+      },
+      category: {
+        findFirst: vi.fn(),
       },
     };
     service = new TasksService(prisma as unknown as PrismaService);
@@ -77,6 +90,38 @@ describe('TasksService', () => {
         service.create(mockUser.id, {
           title: 'Tarefa no passado',
           dueDate: pastDate,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('assigns categoryId when the category belongs to the owner', async () => {
+      prisma.category.findFirst.mockResolvedValue(mockCategory);
+      prisma.task.create.mockResolvedValue({
+        ...mockTask,
+        categoryId: mockCategory.id,
+        category: mockCategory,
+      });
+
+      const result = await service.create(mockUser.id, {
+        title: 'Tarefa com categoria',
+        categoryId: mockCategory.id,
+      });
+
+      expect(prisma.category.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ id: mockCategory.id, ownerId: mockUser.id }),
+        }),
+      );
+      expect(result.category?.id).toBe(mockCategory.id);
+    });
+
+    it('rejects categoryId that does not belong to the owner', async () => {
+      prisma.category.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.create(mockUser.id, {
+          title: 'Tarefa com categoria inválida',
+          categoryId: 'category-de-outro-usuario',
         }),
       ).rejects.toThrow(BadRequestException);
     });
@@ -115,6 +160,19 @@ describe('TasksService', () => {
         }),
       );
       expect(prisma.task.findMany.mock.calls[0][0].where.ownerId).toBeUndefined();
+    });
+
+    it('filters by categoryId when provided', async () => {
+      prisma.task.count.mockResolvedValue(1);
+      prisma.task.findMany.mockResolvedValue([mockTask]);
+
+      await service.findAll(mockUser, { page: 1, pageSize: 10, categoryId: mockCategory.id });
+
+      expect(prisma.task.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ categoryId: mockCategory.id }),
+        }),
+      );
     });
   });
 
@@ -197,6 +255,48 @@ describe('TasksService', () => {
       });
 
       expect(result.status).toBe(TaskStatusEnum.PENDING);
+    });
+
+    it('rejects changing categoryId of a COMPLETED task without reopening it first', async () => {
+      const completedTask = {
+        ...mockTask,
+        status: TaskStatusEnum.COMPLETED,
+      };
+      prisma.task.findFirst.mockResolvedValue(completedTask);
+
+      await expect(
+        service.update(mockUser, mockTask.id, {
+          categoryId: mockCategory.id,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects categoryId that does not belong to the task owner', async () => {
+      prisma.task.findFirst.mockResolvedValue(mockTask);
+      prisma.category.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.update(mockUser, mockTask.id, {
+          categoryId: 'category-de-outro-usuario',
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('allows removing the category by sending categoryId as null', async () => {
+      const taskWithCategory = { ...mockTask, categoryId: mockCategory.id, category: mockCategory };
+      prisma.task.findFirst.mockResolvedValue(taskWithCategory);
+      prisma.task.update.mockResolvedValue({
+        ...taskWithCategory,
+        categoryId: null,
+        category: null,
+      });
+
+      const result = await service.update(mockUser, mockTask.id, {
+        categoryId: null,
+      });
+
+      expect(result.categoryId).toBeNull();
+      expect(prisma.category.findFirst).not.toHaveBeenCalled();
     });
   });
 

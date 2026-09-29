@@ -24,6 +24,7 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_DEV_USER_EMAIL': JSON.stringify(env.DEV_USER_EMAIL || 'user@appstart.local'),
     },
     server: {
+      host: true,
       port: Number(env.WEB_PORT) || 5173,
       proxy: {
         '/api': {
