@@ -15,6 +15,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  Settings,
   Trash2,
   X,
 } from 'lucide-react';
@@ -24,13 +25,16 @@ import { Button } from '../components/ui/button';
 import { Card, CardContent } from '../components/ui/card';
 import { Input } from '../components/ui/input';
 import { ActionFeedback, EmptyState, ErrorState, LoadingState } from '../components/ui/state-feedback';
+import { CategoryManagerModal } from '../components/tasks/category-manager-modal';
 import {
+  categoriesControllerFindAll,
   tasksControllerCreate,
   tasksControllerFindAll,
   tasksControllerRemove,
   tasksControllerUpdate,
 } from '../lib/api-client';
 import type {
+  CategoryDto,
   PaginatedTasksResponseDto,
   TaskDto,
   TaskDtoPriority,
@@ -45,6 +49,7 @@ const taskFormSchema = z.object({
   description: z.string().max(1000, 'Máximo de 1000 caracteres.').optional(),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'URGENT']),
   dueDate: z.string().optional(),
+  categoryId: z.string().optional(),
 });
 
 type TaskFormValues = z.infer<typeof taskFormSchema>;
@@ -64,11 +69,13 @@ export function TasksPage() {
   const search = searchParams.get('search') || '';
   const statusFilter = searchParams.get('status') || '';
   const priorityFilter = searchParams.get('priority') || '';
+  const categoryFilter = searchParams.get('categoryId') || '';
   const sortBy = searchParams.get('sortBy') || 'createdAt';
   const sortOrder = (searchParams.get('sortOrder') as 'asc' | 'desc') || 'desc';
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskDto | null>(null);
+  const [isCategoryManagerOpen, setIsCategoryManagerOpen] = useState(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Update URL Search Params helper
@@ -84,9 +91,18 @@ export function TasksPage() {
     setSearchParams(updated);
   };
 
+  // Fetch Categories (for filter and forms)
+  const { data: categories } = useQuery({
+    queryKey: ['categories'],
+    queryFn: async () => {
+      const res = await categoriesControllerFindAll();
+      return res.data as CategoryDto[];
+    },
+  });
+
   // Fetch Tasks with TanStack Query
   const { data: response, isLoading, isError, refetch } = useQuery({
-    queryKey: ['tasks', { page, search, statusFilter, priorityFilter, sortBy, sortOrder }],
+    queryKey: ['tasks', { page, search, statusFilter, priorityFilter, categoryFilter, sortBy, sortOrder }],
     queryFn: async () => {
       const res = await tasksControllerFindAll({
         page,
@@ -94,6 +110,7 @@ export function TasksPage() {
         ...(search ? { search } : {}),
         ...(statusFilter ? { status: statusFilter as any } : {}),
         ...(priorityFilter ? { priority: priorityFilter as any } : {}),
+        ...(categoryFilter ? { categoryId: categoryFilter } : {}),
         sortBy: sortBy as any,
         sortOrder,
       });
@@ -121,6 +138,7 @@ export function TasksPage() {
       description: '',
       priority: 'MEDIUM',
       dueDate: '',
+      categoryId: '',
     },
   });
 
@@ -131,6 +149,7 @@ export function TasksPage() {
         description: data.description || undefined,
         priority: data.priority as any,
         dueDate: data.dueDate ? new Date(data.dueDate).toISOString() : undefined,
+        categoryId: data.categoryId || undefined,
       });
       return res.data;
     },
@@ -166,6 +185,7 @@ export function TasksPage() {
         priority?: TaskDtoPriority;
         status?: TaskDtoStatus;
         dueDate?: string;
+        categoryId?: string | null;
       };
     }) => {
       const res = await tasksControllerUpdate(id, data as any);
@@ -231,6 +251,8 @@ export function TasksPage() {
     }
   };
 
+  const hasActiveFilters = search || statusFilter || priorityFilter || categoryFilter;
+
   return (
     <div className="space-y-6">
       {/* Header and Actions */}
@@ -245,10 +267,20 @@ export function TasksPage() {
           </p>
         </div>
 
-        <Button onClick={() => setIsCreateOpen(true)} className="gap-1.5 shrink-0">
-          <Plus className="h-4 w-4" />
-          Nova Tarefa
-        </Button>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            onClick={() => setIsCategoryManagerOpen(true)}
+            className="gap-1.5"
+          >
+            <Settings className="h-4 w-4" />
+            Categorias
+          </Button>
+          <Button onClick={() => setIsCreateOpen(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" />
+            Nova Tarefa
+          </Button>
+        </div>
       </div>
 
       {feedback && (
@@ -262,7 +294,7 @@ export function TasksPage() {
       {/* Filter and Search Controls */}
       <Card>
         <CardContent className="p-4 space-y-3">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {/* Search */}
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -301,6 +333,20 @@ export function TasksPage() {
               <option value="URGENT">Urgente</option>
             </select>
 
+            {/* Category Filter */}
+            <select
+              value={categoryFilter}
+              onChange={(e) => updateParams({ categoryId: e.target.value || undefined, page: 1 })}
+              className="flex h-10 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+            >
+              <option value="">Todas as Categorias</option>
+              {(categories || []).map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
+
             {/* Sorting */}
             <select
               value={`${sortBy}:${sortOrder}`}
@@ -332,12 +378,12 @@ export function TasksPage() {
         <EmptyState
           title="Nenhuma tarefa encontrada"
           description={
-            search || statusFilter || priorityFilter
+            hasActiveFilters
               ? 'Nenhum registro corresponde aos filtros selecionados.'
               : 'Você ainda não possui tarefas criadas.'
           }
           action={
-            search || statusFilter || priorityFilter ? (
+            hasActiveFilters ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -375,6 +421,22 @@ export function TasksPage() {
                           {getStatusBadge(task.status)}
                         </div>
                       </div>
+
+                      {task.category && (
+                        <span
+                          className="inline-flex items-center gap-1.5 text-xs font-medium px-2 py-0.5 rounded-full border"
+                          style={{
+                            borderColor: task.category.color,
+                            color: task.category.color,
+                          }}
+                        >
+                          <span
+                            className="h-2 w-2 rounded-full"
+                            style={{ backgroundColor: task.category.color }}
+                          />
+                          {task.category.name}
+                        </span>
+                      )}
 
                       {desc && (
                         <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2">
@@ -571,6 +633,23 @@ export function TasksPage() {
                 />
               </div>
 
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                  Categoria
+                </label>
+                <select
+                  {...registerCreate('categoryId')}
+                  className="flex h-10 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                >
+                  <option value="">Sem categoria</option>
+                  {(categories || []).map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <Button
                   type="button"
@@ -593,6 +672,7 @@ export function TasksPage() {
       {editingTask && (
         <EditTaskModal
           task={editingTask}
+          categories={categories || []}
           onClose={() => setEditingTask(null)}
           onSubmit={(data) => {
             setFeedback(null);
@@ -601,19 +681,33 @@ export function TasksPage() {
           isLoading={updateMutation.isPending}
         />
       )}
+
+      {/* Category Manager Modal */}
+      {isCategoryManagerOpen && (
+        <CategoryManagerModal onClose={() => setIsCategoryManagerOpen(false)} />
+      )}
     </div>
   );
 }
 
 function EditTaskModal({
   task,
+  categories,
   onClose,
   onSubmit,
   isLoading,
 }: {
   task: TaskDto;
+  categories: CategoryDto[];
   onClose: () => void;
-  onSubmit: (data: EditTaskFormValues) => void;
+  onSubmit: (data: {
+    title?: string;
+    description?: string;
+    priority?: TaskDtoPriority;
+    status?: TaskDtoStatus;
+    dueDate?: string;
+    categoryId?: string | null;
+  }) => void;
   isLoading: boolean;
 }) {
   const isCompleted = task.status === 'COMPLETED';
@@ -632,6 +726,7 @@ function EditTaskModal({
       priority: task.priority as any,
       status: task.status as any,
       dueDate: rawDue,
+      categoryId: task.categoryId || '',
     },
   });
 
@@ -669,6 +764,7 @@ function EditTaskModal({
               priority: data.priority,
               status: data.status,
               dueDate: data.dueDate ? new Date(data.dueDate).toISOString() : undefined,
+              categoryId: data.categoryId || null,
             });
           })}
           className="space-y-4"
@@ -723,6 +819,24 @@ function EditTaskModal({
                 <option value="URGENT">Urgente</option>
               </select>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">
+              Categoria
+            </label>
+            <select
+              disabled={isCompleted}
+              {...register('categoryId')}
+              className="flex h-10 w-full rounded-md border border-slate-300 dark:border-slate-700 bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <option value="">Sem categoria</option>
+              {categories.map((category) => (
+                <option key={category.id} value={category.id}>
+                  {category.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <Input

@@ -6,7 +6,6 @@
  * OpenAPI spec version: 1.0.0
  */
 import type { TaskCategoryDto } from './taskCategoryDto';
-import type { TaskDtoCategoryId } from './taskDtoCategoryId';
 import type { TaskDtoDescription } from './taskDtoDescription';
 import type { TaskDtoDueDate } from './taskDtoDueDate';
 import type { TaskDtoPriority } from './taskDtoPriority';
@@ -40,7 +39,7 @@ export interface TaskDto {
      * Identificador da categoria
      * @nullable
      */
-  categoryId?: TaskDtoCategoryId;
+  categoryId?: string | null;
   /**
      * Dados resumidos da categoria
      * @nullable
